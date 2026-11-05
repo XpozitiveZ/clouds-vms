@@ -1,0 +1,26 @@
+services:
+  clouds:
+    build: .
+    container_name: clouds
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      MAX_VCPUS: "4"
+      MAX_RAM_MB: "4096"
+    volumes:
+      - /var/run/libvirt/libvirt-sock:/var/run/libvirt/libvirt-sock
+      - /var/lib/libvirt/images/clouds:/var/lib/libvirt/images/clouds
+      - vm-data:/data
+  nginx:
+    image: mirror.gcr.io/library/nginx:alpine
+    container_name: nginx
+    restart: unless-stopped
+    depends_on:
+      - clouds
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+volumes:
+  vm-data:

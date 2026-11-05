@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <title>Clouds</title>
+    <style>
+      body {
+        font-family: sans-serif;
+        max-width: 1000px;
+        margin: 2em auto;
+        padding: 0 1em;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+        margin-bottom: 1em;
+      }
+      td,
+      th {
+        border: 1px solid #ccc;
+        padding: 6px;
+      }
+      input,
+      select {
+        margin: 2px;
+      }
+      button {
+        margin: 1px;
+      }
+      .err {
+        color: #b00;
+      }
+      .ok {
+        color: #080;
+      }
+      fieldset {
+        margin-bottom: 1em;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Clouds</h1>
+    <p id="msg" class="err"></p>
+
+    <h2>Образы</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Имя</th>
+          <th>Файл</th>
+          <th>Описание</th>
+          <th>Статус</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="images"></tbody>
+    </table>
+    <fieldset>
+      <legend>Загрузить образ с компьютера</legend>
+      <input id="up_name" placeholder="имя (a-z0-9-)" />
+      <input id="up_desc" placeholder="описание" />
+      <input id="up_file" type="file" accept=".img,.qcow2,.raw" />
+      <button onclick="uploadImage()">Загрузить</button>
+    </fieldset>
+    <fieldset>
+      <legend>Скачать образ по ссылке</legend>
+      <input id="dl_name" placeholder="имя (a-z0-9-)" />
+      <input id="dl_desc" placeholder="описание" />
+      <input id="dl_url" placeholder="https://.../image.qcow2" size="45" />
+      <button onclick="downloadImage()">Скачать</button>
+    </fieldset>
+
+    <h2>Создать ВМ</h2>
+    <fieldset>
+      <input id="name" placeholder="имя (a-z0-9-)" />
+      <select id="image"></select>
+      CPU
+      <input id="cpus" type="number" value="1" min="1" style="width: 55px" />
+      RAM, МБ
+      <input
+        id="ram"
+        type="number"
+        value="1024"
+        min="256"
+        style="width: 80px"
+      />
+      Диск, ГБ
+      <input id="disk" type="number" value="10" min="1" style="width: 55px" />
+      <br />Публичный SSH-ключ (файл .pub): <input id="keyfile" type="file" />
+      <button onclick="createVm()">Создать</button>
+    </fieldset>
+
+    <h2>ВМ</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Имя</th>
+          <th>Образ</th>
+          <th>Состояние</th>
+          <th>IP</th>
+          <th>CPU</th>
+          <th>RAM</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="vms"></tbody>
+    </table>
+
+    <script>
+      const g = (id) => document.getElementById(id).value;
+      function msg(t, ok) {
+        const m = document.getElementById("msg");
+        m.textContent = t;
+        m.className = ok ? "ok" : "err";
+      }
+      async function api(m, u, b) {
+        const r = await fetch(u, {
+          method: m,
+          headers: b ? { "Content-Type": "application/json" } : {},
+          body: b ? JSON.stringify(b) : undefined,
+        });
+        const t = await r.json().catch(() => ({}));
+        if (!r.ok)
+          throw new Error(
+            typeof t.detail === "string"
+              ? t.detail
+              : JSON.stringify(t.detail) || r.statusText,
+          );
+        return t;
+      }
+      async function run(fn) {
+        try {
+          await fn();
+        } catch (e) {
+          msg(e.message);
+        }
+        load();
+      }
+
+      async function load() {
+        try {
+          const imgs = await api("GET", "/images");
+          const cur = g("image");
+          document.getElementById("image").innerHTML = imgs
+            .filter((i) => i.status === "ready")
+            .map((i) => `<option>${i.name}</option>`)
+            .join("");
+          if (cur) document.getElementById("image").value = cur;
+          document.getElementById("images").innerHTML = imgs
+            .map(
+              (
+                i,
+              ) => `<tr><td>${i.name}</td><td>${i.path.split("/").pop()}</td><td>${i.description || ""}</td>
+  <td>${i.status}${i.error ? ": " + i.error : ""}</td><td><button onclick="act('DELETE','/images/${i.name}')">delete</button></td></tr>`,
+            )
+            .join("");
+          const v = await api("GET", "/vms");
+          document.getElementById("vms").innerHTML = v
+            .map(
+              (
+                x,
+              ) => `<tr><td>${x.name}</td><td>${x.image}</td><td>${x.state}</td><td>${x.ip || ""}</td><td>${x.cpus}</td><td>${x.ram_mb}</td>
+ <td><button onclick="act('POST','/vms/${x.name}/start')">start</button>
+ <button onclick="act('POST','/vms/${x.name}/stop')">stop</button>
+ <button onclick="act('POST','/vms/${x.name}/stop?force=true')">force off</button>
+ <button onclick="act('DELETE','/vms/${x.name}')">delete</button></td></tr>`,
+            )
+            .join("");
+        } catch (e) {
+          msg(e.message);
+        }
+      }
+      function act(m, u) {
+        run(async () => {
+          await api(m, u);
+          msg("");
+        });
+      }
+
+      function uploadImage() {
+        run(async () => {
+          const f = document.getElementById("up_file").files[0];
+          if (!f) throw new Error("выбери файл образа");
+          const fd = new FormData();
+          fd.append("name", g("up_name").trim());
+          fd.append("description", g("up_desc"));
+          fd.append("file", f);
+          msg("загрузка...", true);
+          const r = await fetch("/images/upload", { method: "POST", body: fd });
+          const t = await r.json().catch(() => ({}));
+          if (!r.ok)
+            throw new Error(
+              typeof t.detail === "string"
+                ? t.detail
+                : JSON.stringify(t.detail),
+            );
+          msg("образ загружен", true);
+        });
+      }
+      function downloadImage() {
+        run(async () => {
+          await api("POST", "/images/download", {
+            name: g("dl_name").trim(),
+            url: g("dl_url").trim(),
+            description: g("dl_desc"),
+          });
+          msg("скачивание запущено, статус обновится в таблице", true);
+        });
+      }
+      function createVm() {
+        run(async () => {
+          const f = document.getElementById("keyfile").files[0];
+          const key = f ? (await f.text()).trim() : null;
+          await api("POST", "/vms", {
+            name: g("name").trim(),
+            image: g("image"),
+            cpus: +g("cpus"),
+            ram_mb: +g("ram"),
+            disk_gb: +g("disk"),
+            ssh_key: key,
+          });
+          msg("");
+        });
+      }
+      load();
+      setInterval(load, 4000);
+    </script>
+  </body>
+</html>

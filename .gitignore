@@ -1,0 +1,4 @@
+*.img
+*.qcow2
+*.iso
+__pycache__/
